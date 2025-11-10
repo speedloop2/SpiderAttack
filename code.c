@@ -5,6 +5,8 @@
 #include "math.h"
 #include <stdbool.h>
 
+#define CONSOLE 0
+
 #define SCANF(...) scanf(__VA_ARGS__)
 /***************************** TIMERS **************************************/
 #define MAX_TIME 30
@@ -246,16 +248,37 @@ void Map_Init(void)
     pMap->heroesPerPlayer = heroes_per_player;
 }
 
-IPosition_t GetClosestMonsterIdx(Node_t *pNode, int heroID)
+IPosition_t GetClosestMonsterPos(Node_t *pNode, int heroID)
 {
     Entity_t *pHero = pNode->pEntities + pNode->MyHeroIDs[heroID];
-    IPosition_t closestMonsterIdx = {0,0};
-    closestMonsterIdx.x = pHero->pos.x;
-    closestMonsterIdx.y = pHero->pos.y;
+    IPosition_t closestMonsterPos = {0,0};
+    closestMonsterPos.x = pHero->pos.x;
+    closestMonsterPos.y = pHero->pos.y;
     double closestDistance = MAX_WIDTH;
     for (int i = 0; i < pNode->entityCount; i++) {
         Entity_t *pEntity = pNode->pEntities + i;
         if (pEntity->type == MONSTER) {
+            double distance = IIDistance(pHero->pos,pEntity->pos);
+            if (distance < closestDistance) {
+                closestDistance = distance;
+                closestMonsterPos = pEntity->pos;
+            }
+        }
+    }
+    return closestMonsterPos;
+}
+
+IPosition_t GetBaseClosestMonsterPos(Node_t *pNode, int heroID)
+{
+    Entity_t *pHero = pNode->pEntities + pNode->MyHeroIDs[heroID];
+    IPosition_t closestMonsterIdx = {0,0};
+    double closestDistance = MAX_WIDTH;
+    for (int i = 0; i < pNode->entityCount; i++) {
+        Entity_t *pEntity = pNode->pEntities + i;
+        if (pEntity->type == MONSTER) {
+            if (IIDistance(pEntity->pos,pMap->myBase) > 13000) {
+                continue;
+            }
             double distance = IIDistance(pHero->pos,pEntity->pos);
             if (distance < closestDistance) {
                 closestDistance = distance;
@@ -266,23 +289,6 @@ IPosition_t GetClosestMonsterIdx(Node_t *pNode, int heroID)
     return closestMonsterIdx;
 }
 
-IPosition_t GetBaseClosestMonsterIdx(Node_t *pNode, int heroID)
-{
-    Entity_t *pHero = pNode->pEntities + pNode->MyHeroIDs[heroID];
-    IPosition_t closestMonsterIdx = {0,0};
-    double closestDistance = MAX_WIDTH;
-    for (int i = 0; i < pNode->entityCount; i++) {
-        Entity_t *pEntity = pNode->pEntities + i;
-        if (pEntity->type == MONSTER) {
-            double distance = IIDistance(pHero->pos,pEntity->pos);
-            if (distance < closestDistance) {
-                closestDistance = distance;
-                closestMonsterIdx = pEntity->pos;
-            }
-        }
-    }
-    return closestMonsterIdx;
-}
 
 int KeepHeroDistance(Node_t *pNode, int heroID)
 {
@@ -319,21 +325,37 @@ int IsCritical(Node_t *pNode)
         if (pEntity->type == MONSTER) {
             if (pEntity->threatFor == 1) {
                 if (IIDistance(pEntity->pos,pMap->myBase) < 700) {
-                    return 1;
-
                     OUT("Is Critical Enemy %d\n",pEntity->id);
+                    return 1;
                 }
             }
         }
     }
     return 0;
 }
+
+int IsDangerous(Node_t *pNode)
+{
+    for (int i = 0; i < pNode->entityCount; i++) {
+        Entity_t *pEntity = pNode->pEntities + i;
+        if (pEntity->type == MONSTER) {
+            if (pEntity->threatFor == 1) {
+                if (IIDistance(pEntity->pos,pMap->myBase) < 6000) {
+                    OUT("Is Dangerous Enemy %d\n",pEntity->id);
+                    return 1;
+                }
+            }
+        }
+    }
+    return 0;
+}
+
 IPosition_t Move_Toward(IPosition_t start, IPosition_t end, int radius){
     IPosition_t toward = {0,0};
     double distance = IIDistance(start,end);
-    if (distance > radius) {
-        toward.x = (int) (((double)  (end.x - start.x)) / distance);
-        toward.y = (int) (((double)  (end.y - start.y)) / distance);
+    if (distance > ((double) radius)) {
+        toward.x = (int) (start.x+radius * ((double)  (end.x - start.x)) / distance);
+        toward.y = (int) (start.y+radius * ((double)  (end.y - start.y)) / distance);
     } else {
         toward.x = end.x;
         toward.y = end.y;
@@ -348,7 +370,7 @@ void Dummy_Move(Node_t *pNode, Move_t *pMove)
 
         OUT("Hero %d\n",i);
         //Entity_t *pHero = pNode->pEntities + pNode->MyHeroIDs[i];
-        IPosition_t closestMonsterPos = GetClosestMonsterIdx(pNode,i);
+        IPosition_t closestMonsterPos = GetBaseClosestMonsterPos(pNode,i);
         if (KeepHeroDistance(pNode,i)) {
             OUT("Keep Hero Distance goto Base %d %d\n",pMap->myBase.x,pMap->myBase.y);
             Move_Add(pMove,i,MOVE,VOID_SPELL,-1,pMap->myBase);
@@ -361,11 +383,27 @@ void Dummy_Move(Node_t *pNode, Move_t *pMove)
             }
         }
     }
+    if (IsDangerous(pNode) == 1) {
+        double ClosestToBase = MAX_WIDTH+MAX_HEIGHT;
+        for (int i = 0; i < pNode->entityCount; i++) {
+            Entity_t *pEntity = pNode->pEntities + i;
+            if (pEntity->type == MONSTER) {
+                if (pEntity->threatFor == 1) {
+                    if (IIDistance(pEntity->pos,pMap->myBase) < ClosestToBase) {
+                        OUT("Is Dangerous Enemy %d\n",pEntity->id);
+                        Move_Add(pMove,1,MOVE,VOID_SPELL,pEntity->id,pEntity->pos);
+                        Move_Add(pMove,2,MOVE,VOID_SPELL,pEntity->id,pEntity->pos);
+                        
+                    }
+                }
+            }
+        }
+    }
     if (IsCritical(pNode) == 1 && pNode->mana[0] >= SPELL_COST) {
         OUT("Is Critical\n");
-        int closestHero = 0;
-        for (int h=0; h < NB_HEROES; h++) {
-            double closestDistance = MAX_WIDTH;
+        int closestHero = 1;
+        double closestDistance = MAX_WIDTH;
+        for (int h=1; h < NB_HEROES; h++) {
             if (IIDistance(pNode->pEntities[pNode->MyHeroIDs[h]].pos,pMap->myBase) < closestDistance) {
                 closestDistance = IIDistance(pNode->pEntities[pNode->MyHeroIDs[h]].pos,pMap->myBase);
                 closestHero = h;
@@ -379,40 +417,106 @@ void Dummy_Move(Node_t *pNode, Move_t *pMove)
 int main(void)
 {
 
-    Map_Init();
+    if (CONSOLE != 1)  {
 
-    // game loop
-    int loop = 0;
+        Map_Init();
 
-    while (1) {
-        Node_t Node;
-        Node_t *pNode = &Node;
-        Parse_input(&Node);
-        if (loop == 0) {
-            // nothing yet at init time
-        }
+        // game loop
+        int loop = 0;
 
-        Move_t Move;
-        Move_Init(&Move);
-        Dummy_Move(pNode,&Move);
-        Move_Print(&Move);
-        loop++;
-    }
+        while (1) {
+            Node_t Node;
+            Node_t *pNode = &Node;
+            Parse_input(&Node);
+            if (loop == 0) {
+                // nothing yet at init time
+            }
 
-/*
-    // game loop
-    while (1) {
+            Move_t Move;
+            Move_Init(&Move);
+            Dummy_Move(pNode,&Move);
+            // Now move Hero 0 to enemy base    
+            if (IIDistance(pNode->pEntities[pNode->MyHeroIDs[0]].pos,pMap->enemyBase) > 6000) {
+                Move_Add(&Move,0,MOVE,VOID_SPELL,-1,pMap->enemyBase);
+            } else {
+                Entity_t *pHero = pNode->pEntities + pNode->MyHeroIDs[0];
+                for (int i = 0; i < pNode->entityCount; i++) {
+                    Entity_t *pEntity = pNode->pEntities + i;
+                    if (IIDistance(pHero->pos,pEntity->pos) > 2200) {
+                        continue;
+                    }
+                    if (pEntity->type == MONSTER && 
+                        pEntity->nearBase == 1 &&
+                        pEntity->threatFor == 2) {
+                        if (pEntity->shieldLife > 0) {
+                            continue;
+                        }
+                        if (pNode->mana[0] < SPELL_COST) {
+                            continue;
+                        }
+                        if (pEntity->health < 15) {
+                            continue;
+                        }
+                        Move_Add(&Move,0,SPELL,SHIELD,pEntity->id,pEntity->pos);
+                        OUT("SHIELD ENTITY %d\n",pEntity->id);
+                        break;
+                    }
+                }
         
-        for (int i = 0; i < heroes_per_player; i++) {
-
-            // Write an action using printf(). DON'T FORGET THE TRAILING \n
-            // To debug: fprintf(stderr, "Debug messages...\n");
-
-
-            // In the first league: MOVE <x> <y> | WAIT; In later leagues: | SPELL <spellParams>;
-            printf("WAIT\n");
+            }
+            Move_Print(&Move);
+            loop++;
         }
-    }*/
+    } else {
+                Map_Init();
+
+        // game loop
+        int loop = 0;
+
+        //while (1) {
+            Node_t Node;
+            Node_t *pNode = &Node;
+            Parse_input(&Node);
+            if (loop == 0) {
+                // nothing yet at init time
+            }
+
+            Move_t Move;
+            Move_Init(&Move);
+            Dummy_Move(pNode,&Move);
+            // Now move Hero 0 to enemy base    
+            if (IIDistance(pNode->pEntities[pNode->MyHeroIDs[0]].pos,pMap->enemyBase) > 6000) {
+                Move_Add(&Move,0,MOVE,VOID_SPELL,-1,pMap->enemyBase);
+            } else {
+                Entity_t *pHero = pNode->pEntities + pNode->MyHeroIDs[0];
+                for (int i = 0; i < pNode->entityCount; i++) {
+                    Entity_t *pEntity = pNode->pEntities + i;
+                    if (IIDistance(pHero->pos,pEntity->pos) > 2200) {
+                        continue;
+                    }
+                    if (pEntity->type == MONSTER && 
+                        pEntity->nearBase == 1 &&
+                        pEntity->threatFor == 2) {
+                        if (pEntity->shieldLife > 0) {
+                            continue;
+                        }
+                        if (pNode->mana[0] < SPELL_COST) {
+                            continue;
+                        }
+                        if (pEntity->health < 15) {
+                            continue;
+                        }
+                        Move_Add(&Move,0,SPELL,SHIELD,pEntity->id,pEntity->pos);
+                        OUT("SHIELD ENTITY %d\n",pEntity->id);
+                        break;
+                    }
+                }
+        
+            }
+            Move_Print(&Move);
+            loop++;
+        //}
+    }
 
     return 0;
 }
